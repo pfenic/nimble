@@ -21,6 +21,7 @@ package nimble;
 
 import java.io.IOException;
 import java.nio.channels.Selector;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.function.Consumer;
 
@@ -61,6 +62,7 @@ public class EventLoop {
 
 	private final Timer<TimerTask> timer;
 	private final HashSet<AbstractTask> readySet; // TODO maybe change name?
+	private final ArrayList<AbstractTask> syncedList;
 
 	private boolean running;
 
@@ -71,6 +73,7 @@ public class EventLoop {
 	private EventLoop() throws IOException {
 		this.selector = Selector.open();
 		this.readySet = new HashSet<>();
+		this.syncedList = new ArrayList<>();
 		this.timer = new Timer<>(1);
 		this.running = true;
 	}
@@ -96,6 +99,17 @@ public class EventLoop {
 	}
 
 
+	protected void syncedSetImmediate(Runnable task) {
+		synchronized(this.syncedList) {
+			this.syncedList.add(new AbstractTask() {
+				@Override
+				protected void run() {
+					task.run();
+				}
+			});
+		}
+	}
+
 	protected void scheduleTask(AbstractTask task) {
 		this.readySet.add(task);
 	}
@@ -109,6 +123,10 @@ public class EventLoop {
 		return new ServerSockChannel(this);
 	}
 	
+	public SSLServerSockChannel openSSLServerSockChannel() throws IOException {
+		return new SSLServerSockChannel(this);
+	}
+
 
 	public <A> void setImmediate(A attachment, Consumer<A> task) {
 		setImmediate(() -> task.accept(attachment));
@@ -156,6 +174,12 @@ public class EventLoop {
 
 			tasks.addAll(this.readySet);
 			this.readySet.clear();
+
+			// TODO non-blocking solution
+			synchronized(this.syncedList) {
+				tasks.addAll(this.syncedList);
+				this.syncedList.clear();
+			}
 
 			if (tasks.isEmpty()) {
 				selector.select(1);
